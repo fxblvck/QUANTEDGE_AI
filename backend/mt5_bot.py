@@ -17,12 +17,11 @@ SL_POINTS = 50
 TP_POINTS = 100
 DEVIATION = 50
 
-COOLDOWN_SECONDS = 10
+COOLDOWN = 10
 last_trade_time = 0
 
 LOG_FILE = "trade_log.csv"
 
-# 🌐 CLOUD ENDPOINT
 CLOUD_URL = "https://quantedge-dashboard.onrender.com/api/log"
 
 # =========================
@@ -35,31 +34,23 @@ def send_to_cloud(data):
         print("⚠️ Cloud send failed")
 
 # =========================
-# INIT LOG FILE
+# INIT LOG
 # =========================
 def init_log():
-    headers = [
-        "Ticket","Time","Type","Lot",
-        "Entry","SL","TP",
-        "Exit","Profit","Status"
-    ]
-
     if not os.path.exists(LOG_FILE):
         with open(LOG_FILE, "w", newline="") as f:
-            csv.writer(f).writerow(headers)
-    else:
-        df = pd.read_csv(LOG_FILE)
-        if "Ticket" not in df.columns:
-            print("⚠️ Fixing log format...")
-            with open(LOG_FILE, "w", newline="") as f:
-                csv.writer(f).writerow(headers)
+            csv.writer(f).writerow([
+                "Ticket","Time","Type","Lot",
+                "Entry","SL","TP",
+                "Exit","Profit","Status"
+            ])
 
 # =========================
 # CONNECT MT5
 # =========================
 def connect():
     if not mt5.initialize():
-        print("❌ MT5 connection failed")
+        print("❌ MT5 failed")
         return False
     print("✅ MT5 Connected")
     return True
@@ -72,7 +63,7 @@ def get_data():
     return pd.DataFrame(rates) if rates is not None else None
 
 # =========================
-# STRATEGY (SMC + BOS)
+# STRATEGY
 # =========================
 def strategy(df):
     recent = df.tail(20)
@@ -85,18 +76,10 @@ def strategy(df):
 
     print(f"📦 Range: {high} - {low}")
 
-    sweep_sell = prev['high'] > high
-    sweep_buy = prev['low'] < low
-
-    bos_sell = last['low'] < prev['low']
-    bos_buy = last['high'] > prev['high']
-
-    if sweep_sell and bos_sell:
-        print("💣 SELL setup")
+    if prev['high'] > high and last['low'] < prev['low']:
         return "SELL"
 
-    if sweep_buy and bos_buy:
-        print("💣 BUY setup")
+    if prev['low'] < low and last['high'] > prev['high']:
         return "BUY"
 
     return None
@@ -124,7 +107,6 @@ def log_trade(ticket, typ, lot, entry, sl, tp):
             "", "", "OPEN"
         ])
 
-    # 🌐 SEND TO CLOUD
     send_to_cloud({
         "Time": str(datetime.now()),
         "Type": typ,
@@ -146,10 +128,10 @@ def update_trades():
         return
 
     for d in deals:
-        if d.entry == 1:  # exit trade
+        if d.entry == 1:
             ticket = d.position_id
 
-            if ticket in df["Ticket"].values:
+            if "Ticket" in df.columns and ticket in df["Ticket"].values:
                 idx = df[df["Ticket"] == ticket].index[0]
 
                 if df.loc[idx, "Status"] == "OPEN":
@@ -157,7 +139,6 @@ def update_trades():
                     df.loc[idx, "Profit"] = d.profit
                     df.loc[idx, "Status"] = "CLOSED"
 
-                    # 🌐 SEND CLOSED TRADE
                     send_to_cloud({
                         "Time": str(datetime.now()),
                         "Type": "CLOSE",
@@ -209,9 +190,10 @@ def run():
     global last_trade_time
 
     init_log()
-    connect()
+    if not connect():
+        return
 
-    print("🚀 Cloud Bot Running...\n")
+    print("🚀 Cloud DB Bot Running...\n")
 
     while True:
         df = get_data()
@@ -224,10 +206,10 @@ def run():
         if mt5.positions_total() == 0:
             signal = strategy(df)
 
-            if signal and (time.time() - last_trade_time > COOLDOWN_SECONDS):
+            if signal and (time.time() - last_trade_time > COOLDOWN):
                 place_trade(signal)
         else:
-            print("⚠️ Position open")
+            print("⚠️ Trade already open")
 
         time.sleep(2)
 
