@@ -1,8 +1,3 @@
-😈🔥 PERFECT BRO — now we move FAST. I’ve already plugged your database URL in.
-
-👉 Just copy this whole file and replace your backend/dashboard.py — DONE.
-
-📄 backend/dashboard.py (FULL DATABASE VERSION — READY)
 from flask import Flask, jsonify, request
 import psycopg2
 
