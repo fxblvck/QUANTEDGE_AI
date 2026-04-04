@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import csv
 import os
+import requests
 from datetime import datetime
 
 # =========================
@@ -21,8 +22,20 @@ last_trade_time = 0
 
 LOG_FILE = "trade_log.csv"
 
+# 🌐 CLOUD ENDPOINT
+CLOUD_URL = "https://quantedge-dashboard.onrender.com/api/log"
+
 # =========================
-# INIT / FIX LOG FILE
+# SEND TO CLOUD
+# =========================
+def send_to_cloud(data):
+    try:
+        requests.post(CLOUD_URL, json=data, timeout=2)
+    except:
+        print("⚠️ Cloud send failed")
+
+# =========================
+# INIT LOG FILE
 # =========================
 def init_log():
     headers = [
@@ -36,15 +49,13 @@ def init_log():
             csv.writer(f).writerow(headers)
     else:
         df = pd.read_csv(LOG_FILE)
-
-        # Auto-fix wrong format
         if "Ticket" not in df.columns:
-            print("⚠️ Fixing old log format...")
+            print("⚠️ Fixing log format...")
             with open(LOG_FILE, "w", newline="") as f:
                 csv.writer(f).writerow(headers)
 
 # =========================
-# CONNECT
+# CONNECT MT5
 # =========================
 def connect():
     if not mt5.initialize():
@@ -113,6 +124,14 @@ def log_trade(ticket, typ, lot, entry, sl, tp):
             "", "", "OPEN"
         ])
 
+    # 🌐 SEND TO CLOUD
+    send_to_cloud({
+        "Time": str(datetime.now()),
+        "Type": typ,
+        "Profit": 0,
+        "Status": "OPEN"
+    })
+
 # =========================
 # UPDATE CLOSED TRADES
 # =========================
@@ -127,7 +146,7 @@ def update_trades():
         return
 
     for d in deals:
-        if d.entry == 1:  # exit
+        if d.entry == 1:  # exit trade
             ticket = d.position_id
 
             if ticket in df["Ticket"].values:
@@ -138,35 +157,15 @@ def update_trades():
                     df.loc[idx, "Profit"] = d.profit
                     df.loc[idx, "Status"] = "CLOSED"
 
+                    # 🌐 SEND CLOSED TRADE
+                    send_to_cloud({
+                        "Time": str(datetime.now()),
+                        "Type": "CLOSE",
+                        "Profit": d.profit,
+                        "Status": "CLOSED"
+                    })
+
     df.to_csv(LOG_FILE, index=False)
-
-# =========================
-# ANALYTICS
-# =========================
-def analytics():
-    try:
-        df = pd.read_csv(LOG_FILE)
-    except:
-        return
-
-    closed = df[df["Status"] == "CLOSED"]
-
-    if len(closed) == 0:
-        print("📊 No closed trades yet\n")
-        return
-
-    total = len(closed)
-    wins = len(closed[closed["Profit"] > 0])
-    losses = len(closed[closed["Profit"] <= 0])
-
-    profit = closed["Profit"].sum()
-    winrate = (wins / total) * 100
-
-    print("\n📊 PERFORMANCE")
-    print(f"Trades: {total}")
-    print(f"Wins: {wins} | Losses: {losses}")
-    print(f"Winrate: {winrate:.2f}%")
-    print(f"Profit: {profit:.2f}\n")
 
 # =========================
 # PLACE TRADE
@@ -201,7 +200,7 @@ def place_trade(signal):
         log_trade(result.order, signal, lot, price, sl, tp)
         last_trade_time = time.time()
     else:
-        print("❌ Trade failed")
+        print("❌ Trade failed", result)
 
 # =========================
 # MAIN LOOP
@@ -212,7 +211,7 @@ def run():
     init_log()
     connect()
 
-    print("🚀 Analytics Bot Running...\n")
+    print("🚀 Cloud Bot Running...\n")
 
     while True:
         df = get_data()
@@ -221,7 +220,6 @@ def run():
             continue
 
         update_trades()
-        analytics()
 
         if mt5.positions_total() == 0:
             signal = strategy(df)
@@ -229,7 +227,7 @@ def run():
             if signal and (time.time() - last_trade_time > COOLDOWN_SECONDS):
                 place_trade(signal)
         else:
-            print("⚠️ Position open\n")
+            print("⚠️ Position open")
 
         time.sleep(2)
 
